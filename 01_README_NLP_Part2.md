@@ -456,6 +456,141 @@ chunks = splitter.split_text(text)
 print(chunks)
 print(len(chunks))
 ```
+### Speicher in Vector Store
+
+```python
+# Allgemein
+!pip install langchain faiss-cpu google-generativeai PyPDF2 pytesseract Pillow pandas whisper
+
+import os
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.vectorstores import FAISS
+from langchain.embeddings import GoogleGenerativeAIEmbeddings
+
+# Google_API_KEY laden
+# PDF
+from PyPDF2 import PdfReader
+
+pdf_path = "data/nihms-1901028.pdf"
+
+with open(pdf_path, "rb") as file:
+    reader = PdfReader(file)
+    text = "".join(page.extract_text() for page in reader.pages if page.extract_text())
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+vector_store = FAISS.from_texts(chunks, embedding=embeddings)
+vector_store.save_local("faiss_index_pdf")
+
+# CSV
+import pandas as pd
+
+csv_path = "data/daten.csv"
+
+with open(csv_path, "r", encoding="utf-8") as file:
+    df = pd.read_csv(file)
+
+text = "\n".join(df.astype(str).apply(lambda row: " ".join(row), axis=1))
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+vector_store = FAISS.from_texts(chunks, embedding=embeddings)
+vector_store.save_local("faiss_index_csv")
+
+# TXT
+txt_path = "data/notizen.txt"
+
+with open(txt_path, "r", encoding="utf-8") as file:
+    text = file.read()
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+vector_store = FAISS.from_texts(chunks, embedding=embeddings)
+vector_store.save_local("faiss_index_txt")
+
+# JSON
+import json
+
+json_path = "data/config.json"
+
+with open(json_path, "r", encoding="utf-8") as file:
+    data = json.load(file)
+
+def extract_text_from_json(obj):
+    if isinstance(obj, dict):
+        return " ".join([extract_text_from_json(v) for v in obj.values()])
+    elif isinstance(obj, list):
+        return " ".join([extract_text_from_json(i) for i in obj])
+    else:
+        return str(obj)
+
+text = extract_text_from_json(data)
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+vector_store = FAISS.from_texts(chunks, embedding=embeddings)
+vector_store.save_local("faiss_index_json")
+
+# Bild (OCR)
+from PIL import Image
+import pytesseract
+
+image_path = "data/bild.jpg"
+
+with open(image_path, "rb") as file:
+    img = Image.open(file)
+    img.load()
+
+text = pytesseract.image_to_string(img)
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+vector_store = FAISS.from_texts(chunks, embedding=embeddings)
+vector_store.save_local("faiss_index_image")
+
+```
+
+### Weave Tracking
+#### Vorbereitung & Login Wandb
+https://wandb.ai/authorize
+
+1. Neues Projekt erstellen
+2. Quickstart Menu folgen 
+
+![wandb](img/WANDB.png)
+
+```bash
+pip install wandb
+wandb login
+# API Key kopieren und eingeben wenn aufgefordert
+```
+Möglicher Fehler
+```bash
+weave version 0.51.44 is available! To upgrade, please run:
+$ pip install weave --upgrade
+```
+Update
+```bash
+!pip install --upgrade weave
+
+```
+
+Erhaltenen Key in Command Line kopieren
+
+```python
+
+```
+
 
 
 ---
