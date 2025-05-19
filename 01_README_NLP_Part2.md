@@ -267,6 +267,43 @@ print(response['message']['content'])
 ## rag with gemini
 https://github.com/zhaw-iwi/rag-with-vector-solution/blob/main/rag_wit_gemini.ipynb
 
+### Import
+```python
+# Standard library imports
+import os  # For interacting with the operating system, e.g., file paths
+import asyncio  # For managing asynchronous tasks
+
+# Third-party library imports
+from dotenv import load_dotenv  # For loading environment variables from a .env file
+from PyPDF2 import PdfReader  # For reading PDF files
+import tqdm  # For displaying progress bars in loops
+
+# LangChain imports - Core functionality
+from langchain.text_splitter import RecursiveCharacterTextSplitter  # For splitting text into manageable chunks
+from langchain.prompts import PromptTemplate  # For defining and managing prompt templates
+from langchain.chains.combine_documents import create_stuff_documents_chain  # For combining retrieved documents into a coherent chain
+from langchain.globals import set_debug  # For enabling debug mode in LangChain
+
+# LangChain - Google Generative AI integrations
+from langchain_google_genai import GoogleGenerativeAIEmbeddings  # For generating embeddings using Google Generative AI
+from langchain_google_genai import ChatGoogleGenerativeAI  # For chat-based interactions with Google Generative AI
+
+# LangChain - Vector store
+from langchain_community.vectorstores import FAISS  # For storing and retrieving embeddings using the FAISS library
+
+# LangChain - Advanced prompt management and messages
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder  # For creating structured chat prompts
+from langchain_core.messages import HumanMessage, AIMessage  # For handling human and AI messages
+from langchain_core.output_parsers import StrOutputParser  # For parsing string outputs from models
+from langchain_core.runnables import RunnableBranch  # For creating branches in the chain of execution
+
+from typing import Dict
+from langchain_core.runnables import RunnablePassthrough
+
+import nest_asyncio
+import weave
+nest_asyncio.apply()
+```
 ### Pfad anpassen
 ```python
 # Beliebieger Dateityp 
@@ -564,7 +601,7 @@ vector_store.save_local("faiss_index_image")
 #### Vorbereitung & Login Wandb
 https://wandb.ai/authorize
 
-1. Neues Projekt erstellen
+1. Neues Projekt erstellen -> User -> Profil -> Projects -> Create new
 2. Quickstart Menu folgen 
 
 ![wandb](img/WANDB.png)
@@ -587,19 +624,537 @@ Update
 
 Erhaltenen Key in Command Line kopieren
 
-```python
+Initallisiert Projekt
 
+```python
+weave.init("medical-data-chatbot") #Projektname ändern
+```
+### Retriever
+```python
+# PDF
+retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+docs = retriever.invoke("What does the PDF say about metabolic risk factors?")
+print(docs)
+
+# CSV
+retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+docs = retriever.invoke("What are the top 3 countries by GDP in the data?")
+print(docs)
+
+# TXT
+retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+docs = retriever.invoke("What key points does this text mention about nutrition?")
+print(docs)
+
+# JSON
+retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+docs = retriever.invoke("What config settings mention logging or error handling?")
+print(docs)
+
+# Bild
+retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+docs = retriever.invoke("What is written on the second form page?")
+print(docs)
+```
+Du kannst für jeden Dateityp genau diese drei Arten von Fragen ausprobieren:
+- Relevante Frage → Inhalt direkt enthalten.
+- Vage/unklare Frage → z. B. "How does this relate to performance?"
+- Unpassende Frage → z. B. "What are the moon phases in August?"
+
+### Question-Answering System
+
+```python
+# Define the template for answering user questions based on a provided context
+system_template = """ 
+Answer the users question based on the below context:
+<context> {context} </context>
+Say that you don't know the answer if you the context is not relevant to the question.
+"""
+# The system_template string specifies how the generative model should process the retrieved context.
+
+# Create a prompt template for the question-answering system
+question_answering_prompt = PromptTemplate(template=system_template, input_variables=["context"])
+# The PromptTemplate wraps the system_template into a reusable object.
+# The input_variables=["context"] defines which variables need to be filled in when the prompt is used.
+
+
+# Initialize the generative model for question answering
+model = ChatGoogleGenerativeAI(model="gemini-1.5-pro-latest", temperature=0.5)
+# The ChatGoogleGenerativeAI class is used to instantiate a chat-based model.
+#   Parameters:
+#        model="gemini-1.5-pro-latest" specifies the version of the model to use.
+#        temperature=0.5 controls the randomness of the responses. A value of 0.5 balances creativity and determinism.
+
+
+# Create a document chain to handle the retrieval and response generation process
+document_chain = create_stuff_documents_chain(llm=model, prompt=question_answering_prompt)
+# The create_stuff_documents_chain() function integrates the model and the prompt into a chain.
 ```
 
+### Testing
+```python
+document_chain.invoke(
+    {
+        "context": docs,
+        "messages": [
+            HumanMessage(content="What is the difference between high and medium protein-based diets?")
+        ],
+    }
+)
+```
+### Retrieval Chain
 
+```python
+# Define a helper function to extract the latest user query from the input parameters
+def parse_retriever_input(params: Dict):
+    return params["messages"][-1].content
 
+# Create a retrieval chain with a passthrough mechanism
+retrieval_chain = RunnablePassthrough.assign(
+    # First step: Extract the user query and use it to retrieve relevant context
+    context=parse_retriever_input | retriever,
+).assign(
+    # Second step: Use the retrieved context to generate an answer
+    answer=document_chain,
+)
+```
+### Testing Retrieval
+```python
+retrieval_chain.invoke(
+    {
+        "messages": [
+            HumanMessage(content="What is the difference between high and medium protein-based diets?")
+        ],
+    }
+)
+
+# Follow Up Query
+retrieval_chain.invoke(
+    {
+        "messages": [
+            HumanMessage(content="Tell me more")
+        ],
+    }
+)
+
+# Testing with Vague Query
+retriever.invoke("Tell me more!")
+
+```
+### Query Transformation
+
+```python
+query_transform_prompt = ChatPromptTemplate.from_messages(
+    [
+        MessagesPlaceholder(variable_name="messages"),
+        (
+            "user",
+            "Given the above conversation, generate a search query to look up in order to get information relevant to the conversation. Only respond with the query, nothing else.",
+        ),
+    ]
+)
+```
+
+### Follow up Questions Transformation
+```python
+chat_history = [
+    {"role": "user", "content": "What are common symptoms of long COVID?"},
+    {"role": "assistant", "content": "Some symptoms include fatigue, shortness of breath, and brain fog."},
+    {"role": "user", "content": "Can you provide examples?"}  # <- Hier wechselst du einfach die Follow-Up Frage
+]
+
+response = query_transform_prompt | llm
+print(response.invoke({"messages": chat_history}).content)
+```
+
+### Add Model
+
+```python
+query_transformation_chain = query_transform_prompt | model
+```
+### Testing 
+```python
+query_transformation_chain.invoke(
+    {
+        "messages": [
+            HumanMessage(content="What is the difference between high and medium protein-based diets?"),
+            AIMessage(
+                content="he study found that both high and normal protein diets improved body composition and glucose control in adults with type 2 diabetes. The lack of observed effects of dietary protein and red meat consumption on weight loss and improved cardiometabolic health suggest that achieved weight loss – rather than diet composition – should be the principal target of dietary interventions for T2D management."
+            ),
+            HumanMessage(content="Tell me more!"),
+        ],
+    }
+)
+```
+### Build Query-Transforming Retriever Chain
+```python
+query_transforming_retriever_chain = RunnableBranch(
+    (
+        lambda x: len(x.get("messages", [])) == 1,
+        # If only one message, then we just pass that message's content to retriever
+        (lambda x: x["messages"][-1].content) | retriever,
+    ),
+    # If messages, then we pass inputs to LLM chain to transform the query, then pass to retriever
+    query_transform_prompt | model | StrOutputParser() | retriever,
+).with_config(run_name="chat_retriever_chain")
+```
+### Finalizing the Conversational Retrieval-Augmented Generation (RAG) Pipeline
+```python
+# Define the system template for generating answers
+SYSTEM_TEMPLATE = """
+Answer the user's questions based on the below context. 
+If the context doesn't contain any relevant information to the question, don't make something up and just say "I don't know":
+
+<context>
+{context}
+</context>
+"""
+# Create a prompt template for question answering (refer to Step 9 for prompt creation)
+question_answering_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            SYSTEM_TEMPLATE,
+        ),
+        MessagesPlaceholder(variable_name="messages"),  # Adds conversational context (Step 9)
+    ]
+)
+
+# Create a document chain for answering user questions (refer to Step 9)
+document_chain = create_stuff_documents_chain(model, question_answering_prompt)
+
+# Build the final conversational retrieval chain
+# Combine the transformed query retrieval (Step 18) with the document chain (Step 9)
+conversational_retrieval_chain = RunnablePassthrough.assign(
+    # Assign the transformed query context to the retrieval chain (refer to Step 18)
+    context=query_transforming_retriever_chain,
+).assign(
+    # Assign the answer generation process to the document chain (refer to Step 9)
+    answer=document_chain,
+)
+```
+### Testing the Conversational Retrieval Chain with an Unrelated Query
+```python
+conversational_retrieval_chain.invoke(
+    {
+        "messages": [
+            HumanMessage(content="Can LangSmith help test my LLM applications?"),
+        ]
+    }
+)
+```
+### Verifying the Conversational Retrieval Chain in the Target Use Case
+```python
+conversational_retrieval_chain.invoke(
+    {
+        "messages": [
+            HumanMessage(content="What is the difference between high and medium protein-based diets?"),
+            AIMessage(
+                content="he study found that both high and normal protein diets improved body composition and glucose control in adults with type 2 diabetes. The lack of observed effects of dietary protein and red meat consumption on weight loss and improved cardiometabolic health suggest that achieved weight loss – rather than diet composition – should be the principal target of dietary interventions for T2D management."
+            ),
+            HumanMessage(content="Tell me more!"),
+        ],
+    }
+    )
+```
+### Wrapping the Conversational Retrieval Pipeline in a Function
+
+```python
+@weave.op()
+async def get_answer(question: str, messages: dict):
+    """
+    Handles user queries by appending them to the conversation history, 
+    processing the query through the conversational retrieval chain, 
+    and appending the AI's response back to the messages.
+
+    Parameters:
+    - question (str): The user's input question.
+    - messages (dict): A dictionary containing the conversation history 
+                       with a "messages" key holding a list of message objects.
+
+    Returns:
+    - str: The generated answer from the system.
+    """
+    # Add the user's question to the conversation history
+    messages["messages"].append(HumanMessage(content=question))
+    
+    # Process the query through the conversational retrieval chain
+    answer = conversational_retrieval_chain.invoke(messages)
+    
+    # Add the system's response to the conversation history
+    messages["messages"].append(AIMessage(content=answer["answer"]))
+    
+    # Return the generated answer
+    return answer["answer"]
+
+    messages = {"messages": []} 
+    answer = asyncio.get_event_loop().run_until_complete(get_answer("What is the difference between high and medium protein-based diets?", messages))
+    print(answer) 
+```
+### Testing the Full Retrieval-Augmented Generation (RAG) Pipeline
+```python
+messages = {"messages": []} 
+answer = asyncio.get_event_loop().run_until_complete(get_answer("how does high‑protein diet versus a low‑protein diet affect lean muscle mass retention and markers of renal function?", messages))
+print(answer)
+```
 ---
-
-
 ## rag and embeddings 
 https://github.com/zhaw-iwi/rag-and-embeddings-solution/blob/main/RAG-and-embeddings-solution.ipynb
 
+### Import
 
+```python 
+import tqdm
+import glob
+from PyPDF2 import PdfReader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from sentence_transformers import SentenceTransformer
+from langchain.text_splitter import SentenceTransformersTokenTextSplitter
+from langchain_community.embeddings import HuggingFaceEmbeddings  # For generating embeddings for text chunks
+import faiss
+import pickle
+import matplotlib.pyplot as plt
+import umap.umap_ as umap
+import numpy as np
+from dotenv import load_dotenv
+import os
+from groq import Groq
+```
+
+### PDF Lesen
+```python 
+### load the pdf from the path
+glob_path = "data/*.pdf"
+text = ""
+for pdf_path in tqdm.tqdm(glob.glob(glob_path)):
+    with open(pdf_path, "rb") as file:
+        reader = PdfReader(file)
+         # Extract text from all pages in the PDF
+        text += " ".join(page.extract_text() for page in reader.pages if page.extract_text())
+
+text[:50]
+```
+### Chunks
+```python
+# Create a splitter: 2000 characters per chunk with an overlap of 200 characters
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+# Split the extracted text into manageable chunks
+chunks = splitter.split_text(text)
+
+print(f"Total chunks: {len(chunks)}")
+print("Preview of the first chunk:", chunks[0][:200])
+```
+### Tokeniing the Text with Different Tokenizers
+```python 
+token_splitter = SentenceTransformersTokenTextSplitter(chunk_overlap=0, tokens_per_chunk=128, model_name="paraphrase-multilingual-MiniLM-L12-v2")
+
+token_split_texts = []
+for text in chunks:
+    token_split_texts += token_splitter.split_text(text)
+
+print(f"\nTotal chunks: {len(token_split_texts)}")
+print(token_split_texts[0])
+```
+#### Multilingual
+```python
+model_name = "paraphrase-multilingual-MiniLM-L12-v2"
+model = SentenceTransformer(model_name)
+tokenized_chunks = []
+for i, text in enumerate(token_split_texts[:10]):
+    # Tokenize each chunk
+    encoded_input = model.tokenizer(text, padding=True, truncation=True, max_length=128, return_tensors='pt')
+    # Convert token IDs back to tokens
+    tokens = model.tokenizer.convert_ids_to_tokens(encoded_input['input_ids'][0].tolist())
+    tokenized_chunks.append(tokens)
+    print(f"Chunk {i}: {tokens}")
+```
+#### German-semantic
+```python
+model_name = "Sahajtomar/German-semantic"
+model = SentenceTransformer(model_name)
+tokenized_chunks = []
+for i, text in enumerate(token_split_texts[:10]):
+    # Tokenize each chunk
+    encoded_input = model.tokenizer(text, padding=True, truncation=True, max_length=128, return_tensors='pt')
+    # Convert token IDs back to tokens
+    tokens = model.tokenizer.convert_ids_to_tokens(encoded_input['input_ids'][0].tolist())
+    tokenized_chunks.append(tokens)
+    print(f"Chunk {i}: {tokens}")
+```
+### Building a FAISS Vector Store
+```python
+d = chunk_embeddings.shape[1]
+print(d)
+index = faiss.IndexFlatL2(d)
+index.add(chunk_embeddings)
+print("Number of embeddings in FAISS index:", index.ntotal)
+faiss.write_index(index, "faiss/faiss_index.index")
+with open("faiss/chunks_mapping.pkl", "wb") as f:
+    pickle.dump(token_split_texts, f)
+
+index = faiss.read_index("faiss/faiss_index.index")
+with open("faiss/chunks_mapping.pkl", "rb") as f:
+    token_split_texts = pickle.load(f)
+print(len(token_split_texts))
+
+```
+### Projecting Embeddings with UMAP
+```python
+# Fit UMAP on the full dataset embeddings
+umap_transform = umap.UMAP(random_state=0, transform_seed=0).fit(chunk_embeddings)
+
+def project_embeddings(embeddings, umap_transform):
+    """
+    Project a set of embeddings using a pre-fitted UMAP transform.
+    """
+    umap_embeddings = np.empty((len(embeddings), 2))
+    for i, embedding in enumerate(tqdm.tqdm(embeddings, desc="Projecting Embeddings")):
+        umap_embeddings[i] = umap_transform.transform([embedding])
+    return umap_embeddings
+
+# Project the entire dataset embeddings
+projected_dataset_embeddings = project_embeddings(chunk_embeddings, umap_transform)
+print("Projected dataset embeddings shape:", projected_dataset_embeddings.shape)
+```
+### Querying the Vector Store and Projecting Results
+```python
+def retrieve(query, k):
+    """
+    Retrieve the top k similar text chunks and their embeddings for a given query.
+    """
+    query_embedding = model.encode([query], convert_to_numpy=True)
+    distances, indices = index.search(query_embedding, k)
+    retrieved_texts = [token_split_texts[i] for i in indices[0]]
+    retrieved_embeddings = np.array([chunk_embeddings[i] for i in indices[0]])
+    return retrieved_texts, retrieved_embeddings, distances
+
+query = "What is the most important factor in diagnosing asthma?"
+results, result_embeddings, distances = retrieve(query, 3)
+print("Retrieved document preview:")
+print(results[0][:300])
+print(results[1])
+
+# Project the result embeddings
+projected_result_embeddings = project_embeddings(result_embeddings, umap_transform)
+
+# Also embed and project the original query for visualization
+query_embedding = model.encode([query], convert_to_numpy=True)
+project_original_query = project_embeddings(query_embedding, umap_transform)
+
+# embed the embeddings of the entire dataset
+projected_dataset_embeddings = project_embeddings(chunk_embeddings, umap_transform)
+```
+### Visualizing the Results
+```python
+def shorten_text(text, max_length=15):
+    """Shortens text to max_length and adds an ellipsis if shortened."""
+    return (text[:max_length] + '...') if len(text) > max_length else text
+
+plt.figure()
+
+# Scatter plots
+plt.scatter(projected_dataset_embeddings[:, 0], projected_dataset_embeddings[:, 1],
+            s=10, color='gray', label='Dataset')
+plt.scatter(projected_result_embeddings[:, 0], projected_result_embeddings[:, 1],
+            s=100, facecolors='none', edgecolors='g', label='Results')
+plt.scatter(project_original_query[:, 0], project_original_query[:, 1],
+            s=150, marker='X', color='r', label='Original Query')
+
+# If results is a list of texts, iterate directly
+for i, text in enumerate(results):
+    if i < len(projected_result_embeddings):
+        plt.annotate(shorten_text(text),
+                     (projected_result_embeddings[i, 0], projected_result_embeddings[i, 1]),
+                     fontsize=8)
+
+# Annotate the original query point
+original_query_text = 'Original Query Text'  # Replace with your actual query text if needed
+plt.annotate(shorten_text(original_query_text),
+             (project_original_query[0, 0], project_original_query[0, 1]),
+             fontsize=8)
+
+plt.gca().set_aspect('equal', 'datalim')
+plt.title('Asthma')
+plt.legend()
+plt.show()
+```
+### Attach Retrieved Results to LLM
+```python
+load_dotenv()
+# Access the API key using the variable name defined in the .env file
+google_api_key = os.getenv("GOOGLE_API_KEY")
+openai_api_key = os.getenv("OPENAI_API_KEY")
+groq_api_key = os.getenv("GROQ_API_KEY")
+
+def retrieve_texts(query, k, index, token_split_texts, model):
+    """
+    Retrieve the top k similar text chunks and their embeddings for a given query.
+    """
+    query_embedding = model.encode([query], convert_to_numpy=True)
+    distances, indices = index.search(query_embedding, k)
+    retrieved_texts = [token_split_texts[i] for i in indices[0]]
+    return retrieved_texts, distances
+
+def answer_query(query, k, index,texts):
+    """
+    Retrieve the top k similar text chunks for the given query using the retriever,
+    inject them into a prompt, and send it to the Groq LLM to obtain an answer.
+    
+    Parameters:
+    - query (str): The user's query.
+    - k (int): Number of retrieved documents to use.
+    - groq_api_key (str): Your Groq API key.
+    
+    Returns:
+    - answer (str): The answer generated by the LLM.
+    """
+    # Retrieve the top k documents using your retriever function.
+    # This retriever uses the following definition:
+    # def retrieve(query, k):
+    #     query_embedding = model.encode([query], convert_to_numpy=True)
+    #     distances, indices = index.search(query_embedding, k)
+    #     retrieved_texts = [token_split_texts[i] for i in indices[0]]
+    #     retrieved_embeddings = np.array([chunk_embeddings[i] for i in indices[0]])
+    #     return retrieved_texts, retrieved_embeddings, distances
+    model_name = "Sahajtomar/German-semantic"
+    model = SentenceTransformer(model_name)
+    retrieved_texts, _ = retrieve_texts(query, k, index, texts, model)
+    
+    # Combine the retrieved documents into a single context block.
+    context = "\n\n".join(retrieved_texts)
+    
+    # Build a prompt that instructs the LLM to answer the query based on the context.
+    prompt = (
+        "Answer the following question using the provided context. "
+        "Explain it as if you are explaining it to a 5 year old.\n\n"
+        "Context:\n" + context + "\n\n"
+        "Question: " + query + "\n"
+        "Answer:"
+    )
+    
+    # Initialize the Groq client and send the prompt.
+    client = Groq(api_key=groq_api_key)
+    messages = [
+        {
+            "role": "system",
+            "content": prompt
+        }
+    ]
+    
+    llm = client.chat.completions.create(
+        messages=messages,
+        model="llama-3.3-70b-versatile"
+    )
+    
+    # Extract and return the answer.
+    answer = llm.choices[0].message.content
+    return answer
+
+query = "What is the most important factor in diagnosing asthma?"
+answer = answer_query(query, 5, index, token_split_texts)
+print("LLM Answer:", answer)
+```
+--- 
 ## rag advanced
 https://github.com/zhaw-iwi/advanced-rag-solution
 
@@ -608,6 +1163,24 @@ https://github.com/zhaw-iwi/advanced-rag-solution
 !pip install langchain-community
 !pip install faiss-cpu
 !pip install groq
+```
+### Import
+```python
+import tqdm
+import glob
+from PyPDF2 import PdfReader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.text_splitter import SentenceTransformersTokenTextSplitter
+from langchain_community.embeddings import HuggingFaceEmbeddings  # For generating embeddings for text chunks
+import faiss
+import pickle
+from dotenv import load_dotenv
+import os
+from groq import Groq
+from sentence_transformers import SentenceTransformer
+import random
+from sentence_transformers import CrossEncoder
+import numpy as np
 ```
 ### API Key hinterlegen in Colab
 
@@ -624,18 +1197,150 @@ groq_api_key = userdata.get('GROQ_API_KEY')
 ```bash
 glob_path = "/content/*.pdf"
 ```
+### RAG Pipeline
+```python
+# PDF
+from PyPDF2 import PdfReader
 
-```bash
-```
+glob_path = "data/*.pdf"
+text = ""
 
-```bash
-```
+for pdf_path in tqdm.tqdm(glob.glob(glob_path)):
+    with open(pdf_path, "rb") as file:
+        reader = PdfReader(file)
+        text += " ".join(page.extract_text() for page in reader.pages if page.extract_text())
 
-```bash
-```
+print(text[:500])
 
-```bash
-```
+# CSV
+import pandas as pd
 
-```bash
+glob_path = "data/*.csv"
+text = ""
+
+for csv_path in tqdm.tqdm(glob.glob(glob_path)):
+    with open(csv_path, "r", encoding="utf-8") as file:
+        df = pd.read_csv(file)
+        text += "\n".join(df.astype(str).apply(lambda row: " ".join(row), axis=1))
+
+print(text[:500])
+
+# TXT
+glob_path = "data/*.txt"
+text = ""
+
+for txt_path in tqdm.tqdm(glob.glob(glob_path)):
+    with open(txt_path, "r", encoding="utf-8") as file:
+        text += file.read() + "\n"
+
+print(text[:500])
+
+# JSON
+import json
+
+def extract_text_from_json(obj):
+    if isinstance(obj, dict):
+        return " ".join([extract_text_from_json(v) for v in obj.values()])
+    elif isinstance(obj, list):
+        return " ".join([extract_text_from_json(i) for i in obj])
+    else:
+        return str(obj)
+
+glob_path = "data/*.json"
+text = ""
+
+for json_path in tqdm.tqdm(glob.glob(glob_path)):
+    with open(json_path, "r", encoding="utf-8") as file:
+        data = json.load(file)
+        text += extract_text_from_json(data) + "\n"
+
+print(text[:500])
+
+# Bilder
+from PIL import Image
+import pytesseract
+
+glob_path = "data/*.[pjPJ]*"  # erfasst .jpg, .JPG, .png, .PNG usw.
+text = ""
+
+for image_path in tqdm.tqdm(glob.glob(glob_path)):
+    with open(image_path, "rb") as file:
+        img = Image.open(file)
+        img.load()
+        text += pytesseract.image_to_string(img) + "\n"
+
+print(text[:500])
 ```
+#### Chunks
+```python
+# PDF
+# Angenommen: `text` enthält den zusammengeführten Text aus allen PDFs
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+print(f"Total chunks (PDF): {len(chunks)}")
+print("Preview of the first PDF chunk:", chunks[0][:200])
+
+# CSV
+# text wurde aus mehreren CSV-Dateien generiert
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+print(f"Total chunks (CSV): {len(chunks)}")
+print("Preview of the first CSV chunk:", chunks[0][:200])
+
+# TXT
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+print(f"Total chunks (TXT): {len(chunks)}")
+print("Preview of the first TXT chunk:", chunks[0][:200])
+
+# JSON
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+print(f"Total chunks (JSON): {len(chunks)}")
+print("Preview of the first JSON chunk:", chunks[0][:200])
+
+# Bild
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+print(f"Total chunks (Images): {len(chunks)}")
+print("Preview of the first image chunk:", chunks[0][:200])
+```
+#### Embedding model
+
+```python
+model_name = "paraphrase-multilingual-MiniLM-L12-v2"
+model = SentenceTransformer(model_name)
+chunk_embeddings = model.encode(chunks, convert_to_numpy=True)
+print(chunk_embeddings.dtype) # Testen welcher Datentyp mein Modell zurück gibt -> wenn Float32 alles OK, wenn nicht muss folgendes eingesetz werden:
+chunk_embeddings = model.encode(chunks, convert_to_numpy=True).astype("float32")
+```
+#### Index
+```python
+# Vorbereitung einmalig
+import faiss
+import pickle
+import numpy as np
+import os
+
+os.makedirs("faiss", exist_ok=True)
+
+# Muster
+# Schritt 1: FAISS-Index initialisieren und befüllen
+d = chunk_embeddings.shape[1]
+print("Dimensions:", d)
+
+index = faiss.IndexFlatL2(d)
+index.add(chunk_embeddings)
+print("Number of embeddings in FAISS index:", index.ntotal)
+
+# Schritt 2: Speichern
+faiss.write_index(index, "faiss/faiss_index_TYP.index")  # <--- TYP ersetzen
+with open("faiss/chunks_mapping_TYP.pkl", "wb") as f:
+    pickle.dump(chunks, f)
+```
+Restliche Schritte im Github rag advanced
