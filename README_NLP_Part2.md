@@ -54,7 +54,7 @@ pip install tqdm #tqdm – Progress bar utility for loops (useful when processin
 
 ## 📋 Import-to-Package Mapping
 
-This table helps you understand which `pip install` command is required for each Python import used in this project.
+This table helps you understand which `pip install` or `!pip install` command is required for each Python import used in this project.
 
 | **Import** | **pip install** | **Description** |
 |------------|------------------|-----------------|
@@ -85,3 +85,422 @@ This table helps you understand which `pip install` command is required for each
 | `import numpy as np` | `pip install numpy` | Numeric computing and arrays |
 | `import tqdm` | `pip install tqdm` | Progress bars in loops |
 | `import random` | *Standard Library* | Random number utilities |
+
+## 🛠️ Troubleshooting & Forced Installation
+
+If you encounter errors like: ModuleNotFoundError: No module named 'xyz'
+
+Follow these steps to fix the issue:
+---
+
+### 1. Install the Missing Package
+
+```bash
+pip install xyz
+```
+
+### 2. Force Reinstallation
+```bash
+pip install --force-reinstall xyz
+```
+
+### 3. Upgrade the Package
+```bash
+pip install --upgrade xyz
+```
+
+### 4. Install a Specific Version
+```bash
+pip install xyz==1.2.3
+```
+
+### 5. Uninstall and Reinstall
+```bash
+pip uninstall xyz
+pip install xyz
+```
+---
+
+# .env Datei
+
+Für API-Schlüssel usw.
+
+```env
+OPENAI_API_KEY=dein_openai_api_key
+GOOGLE_API_KEY=dein_google_api_key
+GROQ_API_KEY=dein_groq_api_key
+```
+---
+## Laden der Variablen im Code
+
+```python
+from dotenv import load_dotenv
+import os
+
+load_dotenv()  # Lädt die Variablen aus .env
+google_api_key = os.getenv("GOOGLE_API_KEY")
+openai_api_key = os.getenv("OPENAI_API_KEY")
+groq_api_key = os.getenv("GROQ_API_KEY")
+```
+
+# LLM_Calls
+
+## Google
+```python
+import google.generativeai as genai
+genai.configure(api_key=google_api_key)
+model = genai.GenerativeModel(
+    "models/gemini-2.0-flash",
+    system_instruction="You are a cat. Your name is Neko.",
+)
+
+chat = model.start_chat()
+response = chat.send_message("Good day fine chatbot")
+print(response.text)
+```
+---
+## Openai
+```python
+from openai import OpenAI
+client = OpenAI(api_key=openai_api_key)
+
+completion = client.chat.completions.create(
+    model="gpt-4o-mini",
+    messages=[
+        {"role": "developer", "content": "You are a helpful assistant."},
+        {
+            "role": "user",
+            "content": "Write a haiku about recursion in programming."
+        }
+    ]
+)
+
+print(completion.choices[0].message)
+```
+---
+## Groq
+```python
+from groq import Groq
+
+client = Groq(api_key=groq_api_key)
+
+llm = client.chat.completions.create(
+    messages=[
+        {
+            "role": "system",
+            "content": "You are a helpful AI Assistant. You explain ever \
+            topic the user asks as if you are explaining it to a 5 year old"
+        },
+        {
+            "role": "user",
+            "content": "What are Black Holes?",
+        }
+    ],
+    model="mixtral-8x7b-32768",
+)
+
+print(llm.choices[0].message.content)
+```
+# Deepseek
+https://github.com/zhaw-iwi/LLM-intro-solution/blob/main/deepseek_playground.ipynb 
+
+## GPU in Colab aktivieren 
+Menü: Laufzeit (Runtime) → Laufzeittyp ändern (Change runtime type)
+Wähle GPU unter "Hardwarebeschleuniger"
+---
+### CUBA und ollama
+
+![Deepseek](img/Fehler_Deepseek.png)
+
+kann wie folgt gelöst werden:
+
+```bash
+!nvidia-smi #prüft ob GPU verfügbar ist
+!apt-get install -y pciutils lshw # installiert fehlende tools
+!ollama run llama2 # testen ob ollama die GPU erkennt
+!curl https://ollama.ai/install.sh | sh
+!sudo apt install -y cuda-drivers
+```
+#### cuda drivers laden & installieren
+
+```bash
+!echo 'debconf debconf/frontend select Noninteractive' | sudo debconf-set-selections
+!sudo apt-get update && sudo apt-get install -y cuda-drivers
+
+# Kontrollieren ob cuda drivers funktionieren
+import os
+
+# Set LD_LIBRARY_PATH so the system NVIDIA library
+os.environ.update({'LD_LIBRARY_PATH': '/usr/lib64-nvidia'})
+```
+#### Start Ollama
+
+```bash
+!nohup ollama serve & #nohup is a command line expression that prevents a process from stopping after exiting the terminal.
+```
+
+#### Download Model
+
+```bash
+!ollama pull deepseek-r1:7b # Deepseek 
+!ollama pull llama2 #llama2
+!ollama pull deepseek-coder:6.7b # Deepseek -> wenn 7b nicht verfügbar
+
+```
+#### pip install ollama in Python
+```bash
+!pip install ollama
+```
+#### Beispiel request
+```python
+import ollama
+response = ollama.chat(model='deepseek-r1:7b', messages=[
+  {
+    'role': 'user',
+    'content': "How many r's are in a strawberry?",
+  },
+])
+print(response['message']['content'])
+```
+
+# RAG
+## rag with gemini
+https://github.com/zhaw-iwi/rag-with-vector-solution/blob/main/rag_wit_gemini.ipynb
+
+### Pfad anpassen
+```python
+# Beliebieger Dateityp 
+from google.colab import files
+uploaded = files.upload()  # Beliebiger Dateityp z.B. PDF, CSV, JPG, PNG, TXT, JSON, etc. hochladen
+# PDF
+import fitz 
+pdf_path = file_path
+# CSV
+import pandas as pd
+csv_path = file_path
+# JPG, PNG
+from PIL import Image
+import matplotlib.pyplot as plt
+image_path = file_path
+# TXT
+txt_path = file_path 
+# JSON
+import json
+json_path = file_path
+
+# Direkter File import
+pdf_path = "/content/*.pdf"
+csv_path = "/content/*.csv"
+image_path = "/content/*.jpg"
+txt_path = "/content/*.txt"
+json_path = "/content/*.json"
+```
+### Daten auslesen
+```python
+# PDF
+from PyPDF2 import PdfReader
+
+pdf_path = "data/nihms-1901028.pdf"
+
+with open(pdf_path, "rb") as file:
+    reader = PdfReader(file)
+    text = "".join(page.extract_text() for page in reader.pages if page.extract_text())
+
+text
+
+# CSV
+import pandas as pd
+
+csv_path = "data/daten.csv"
+
+with open(csv_path, "r", encoding="utf-8") as file:
+    df = pd.read_csv(file)
+
+df.head()
+
+# TXT
+txt_path = "data/notizen.txt"
+
+with open(txt_path, "r", encoding="utf-8") as file:
+    text = file.read()
+
+text
+
+# JSON
+import json
+
+json_path = "data/config.json"
+
+with open(json_path, "r", encoding="utf-8") as file:
+    data = json.load(file)
+
+data
+
+#PNG, JPG
+from PIL import Image
+import matplotlib.pyplot as plt
+
+image_path = "data/bild.jpg"
+
+with open(image_path, "rb") as file:
+    img = Image.open(file)
+    img.load()
+
+plt.imshow(img)
+plt.axis('off')
+plt.show()
+
+# WAV
+from scipy.io import wavfile
+
+audio_path = "data/audio.wav"
+
+with open(audio_path, "rb") as file:
+    rate, data = wavfile.read(file)
+
+rate, data.shape
+```
+### Text aufteilen
+```python
+# PDF
+from PyPDF2 import PdfReader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+pdf_path = "data/nihms-1901028.pdf"
+
+with open(pdf_path, "rb") as file:
+    reader = PdfReader(file)
+    text = "".join(page.extract_text() for page in reader.pages if page.extract_text())
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+print(chunks)
+print(len(chunks))
+
+# CSV nur Textspalten
+import pandas as pd
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+csv_path = "data/daten.csv"
+
+with open(csv_path, "r", encoding="utf-8") as file:
+    df = pd.read_csv(file)
+
+# Kombiniere alle Textspalten zu einem großen String
+text = "\n".join(df.astype(str).apply(lambda row: " ".join(row), axis=1))
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+print(chunks)
+print(len(chunks))
+
+# TXT
+txt_path = "data/notizen.txt"
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+with open(txt_path, "r", encoding="utf-8") as file:
+    text = file.read()
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+print(chunks)
+print(len(chunks))
+
+# JSON nur textuelle Inhalte
+import json
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+json_path = "data/config.json"
+
+with open(json_path, "r", encoding="utf-8") as file:
+    data = json.load(file)
+
+# Konvertiere alles rekursiv zu String
+def extract_text_from_json(obj):
+    if isinstance(obj, dict):
+        return " ".join([extract_text_from_json(v) for v in obj.values()])
+    elif isinstance(obj, list):
+        return " ".join([extract_text_from_json(i) for i in obj])
+    else:
+        return str(obj)
+
+text = extract_text_from_json(data)
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+print(chunks)
+print(len(chunks))
+
+# Bild OCR erforderlich
+!apt install tesseract-ocr
+from PIL import Image
+import pytesseract
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+image_path = "data/bild.jpg"
+
+with open(image_path, "rb") as file:
+    img = Image.open(file)
+    img.load()
+
+# OCR: Text aus Bild extrahieren
+text = pytesseract.image_to_string(img)
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
+chunks = splitter.split_text(text)
+
+print(chunks)
+print(len(chunks))
+```
+
+
+---
+
+
+## rag and embeddings 
+https://github.com/zhaw-iwi/rag-and-embeddings-solution/blob/main/RAG-and-embeddings-solution.ipynb
+
+
+## rag advanced
+https://github.com/zhaw-iwi/advanced-rag-solution
+
+```bash
+!pip install PyPDF2
+!pip install langchain-community
+!pip install faiss-cpu
+!pip install groq
+```
+### API Key hinterlegen in Colab
+
+![Key_in_Colab](img/Key_in_Colab.png)
+
+### Imports dotenv nicht nötig
+```python
+from google.colab import userdata
+google_api_key = userdata.get('GOOGLE_API_KEY')
+openai_api_key = userdata.get('OPENAI_API_KEY')
+groq_api_key = userdata.get('GROQ_API_KEY')
+```
+### Pfad anpassen
+```bash
+glob_path = "/content/*.pdf"
+```
+
+```bash
+```
+
+```bash
+```
+
+```bash
+```
+
+```bash
+```
+
+```bash
+```
